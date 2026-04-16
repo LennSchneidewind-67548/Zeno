@@ -21,6 +21,9 @@
 .env*
 !.env.example
 
+# local secrets file
+secrets.md
+
 # logs
 npm-debug.log*
 yarn-debug.log*
