@@ -1,25 +1,6 @@
 import { getServerClient } from "@/lib/supabase-server";
+import { DbTask, toClientTask } from "@/lib/task-types";
 
-type DbTask = {
-  id: string;
-  text: string;
-  done: boolean;
-  due_date: string | null;
-  priority: "low" | "medium" | "high" | null;
-  created_at: string;
-};
-
-function toClientTask(row: DbTask) {
-  return {
-    id: row.id,
-    text: row.text,
-    done: row.done,
-    dueDate: row.due_date ? new Date(row.due_date) : undefined,
-    priority: row.priority ?? undefined,
-  };
-}
-
-// PATCH /api/tasks/[id] — update fields on a task
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -34,11 +15,12 @@ export async function PATCH(
   const { id } = await params;
   const body = await req.json();
 
-  // Map camelCase from the frontend to snake_case for the database
   const fields: Record<string, unknown> = {};
   if (typeof body.done === "boolean") fields.done = body.done;
   if ("priority" in body) fields.priority = body.priority ?? null;
   if ("dueDate" in body) fields.due_date = body.dueDate ?? null;
+  if (typeof body.x === "number") fields.canvas_x = body.x;
+  if (typeof body.y === "number") fields.canvas_y = body.y;
 
   const { data, error } = await supabase
     .from("tasks")
@@ -54,7 +36,6 @@ export async function PATCH(
   return Response.json(toClientTask(data as DbTask));
 }
 
-// DELETE /api/tasks/[id] — delete a task
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }

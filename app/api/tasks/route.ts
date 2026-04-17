@@ -1,25 +1,6 @@
 import { getServerClient } from "@/lib/supabase-server";
+import { DbTask, toClientTask } from "@/lib/task-types";
 
-type DbTask = {
-  id: string;
-  text: string;
-  done: boolean;
-  due_date: string | null;
-  priority: "low" | "medium" | "high" | null;
-  created_at: string;
-};
-
-function toClientTask(row: DbTask) {
-  return {
-    id: row.id,
-    text: row.text,
-    done: row.done,
-    dueDate: row.due_date ? new Date(row.due_date) : undefined,
-    priority: row.priority ?? undefined,
-  };
-}
-
-// GET /api/tasks — fetch all tasks for the logged-in user
 export async function GET() {
   const supabase = await getServerClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -40,7 +21,6 @@ export async function GET() {
   return Response.json((data as DbTask[]).map(toClientTask));
 }
 
-// POST /api/tasks — create a new task
 export async function POST(req: Request) {
   const supabase = await getServerClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -58,7 +38,13 @@ export async function POST(req: Request) {
 
   const { data, error } = await supabase
     .from("tasks")
-    .insert({ text, user_id: user.id, done: false })
+    .insert({
+      text,
+      user_id: user.id,
+      done: false,
+      canvas_x: 600 + (Math.random() * 120 - 60),
+      canvas_y: 300 + (Math.random() * 120 - 60),
+    })
     .select()
     .single();
 

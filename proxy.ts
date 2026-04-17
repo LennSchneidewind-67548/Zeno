@@ -28,13 +28,8 @@ export async function proxy(req: NextRequest) {
   // getUser() is the safe way to check auth — it verifies the token with Supabase
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Not logged in and trying to reach a protected page → send to login
-  if (!user && path !== "/login") {
-    return NextResponse.redirect(new URL("/login", req.url));
-  }
-
-  // Already logged in and hitting the login page → send to app
-  if (user && path === "/login") {
+  // Not logged in and trying to reach a protected page → send to landing
+  if (!user && path === "/tasks") {
     return NextResponse.redirect(new URL("/", req.url));
   }
 
