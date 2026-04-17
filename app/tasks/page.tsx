@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { motion, useMotionValue } from "framer-motion";
+import { motion, useMotionValue, useVelocity, useTransform, useSpring } from "framer-motion";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { cn } from "@/lib/utils";
 import type { Priority, ClientTask } from "@/lib/task-types";
@@ -215,6 +215,12 @@ function TaskCard({ task, initialX, initialY, onSetDueDate, onSetPriority, onPos
   const router = useRouter();
   const x = useMotionValue(initialX);
   const y = useMotionValue(initialY);
+
+  // Jelly effect: tilt based on horizontal drag velocity, spring back on release
+  const xVelocity = useVelocity(x);
+  const tilt = useTransform(xVelocity, [-1200, 0, 1200], [-18, 0, 18]);
+  const smoothTilt = useSpring(tilt, { stiffness: 180, damping: 18, mass: 0.4 });
+
   function handleDragEnd() {
     onPositionSave(task.id, x.get(), y.get());
   }
@@ -223,7 +229,10 @@ function TaskCard({ task, initialX, initialY, onSetDueDate, onSetPriority, onPos
     <motion.div
       drag
       dragMomentum={false}
-      style={{ x, y, position: "absolute", top: 0, left: 0 }}
+      style={{ x, y, rotate: smoothTilt, position: "absolute", top: 0, left: 0 }}
+      whileHover={{ scale: 1.03, boxShadow: "0 0 0 1px rgba(6,182,212,0.25), 0 20px 40px rgba(0,0,0,0.6)" }}
+      whileDrag={{ scale: 1.06, boxShadow: "0 0 0 1px rgba(6,182,212,0.4), 0 28px 50px rgba(0,0,0,0.7)" }}
+      transition={{ type: "spring", stiffness: 300, damping: 22 }}
       onDragEnd={handleDragEnd}
       className="w-56 bg-slate-900 border border-slate-700/50 rounded-xl p-4 shadow-lg shadow-black/40 cursor-grab active:cursor-grabbing select-none"
     >
