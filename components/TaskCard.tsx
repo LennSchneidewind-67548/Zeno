@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   motion,
   useVelocity,
@@ -239,8 +238,10 @@ type TaskCardProps = {
   x: MotionValue<number>;
   y: MotionValue<number>;
   isDragging: boolean;
+  isExpanded: boolean;
   onPointerDown: (e: React.PointerEvent) => void;
   registerHeight: (id: string, h: number) => void;
+  registerRef: (el: HTMLDivElement | null) => void;
   onSetDueDate: (id: string, date: Date) => void;
   onSetPriority: (id: string, p: Priority) => void;
 };
@@ -250,12 +251,13 @@ export function TaskCard({
   x,
   y,
   isDragging,
+  isExpanded,
   onPointerDown,
   registerHeight,
+  registerRef,
   onSetDueDate,
   onSetPriority,
 }: TaskCardProps) {
-  const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Jelly tilt: same as before, derived from horizontal velocity
@@ -274,6 +276,14 @@ export function TaskCard({
     return () => ro.disconnect();
   }, [task.id, registerHeight]);
 
+  // Register DOM element for expansion origin rect (mount/unmount only)
+  const registerRefStable = useRef(registerRef);
+  useEffect(() => { registerRefStable.current = registerRef; });
+  useEffect(() => {
+    registerRefStable.current(cardRef.current);
+    return () => { registerRefStable.current(null); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <motion.div
       ref={cardRef}
@@ -285,14 +295,17 @@ export function TaskCard({
         top: 0,
         left: 0,
         zIndex: isDragging ? 50 : "auto",
+        pointerEvents: isExpanded ? "none" : "auto",
       }}
       animate={
-        isDragging
-          ? { scale: 1.06, boxShadow: "0 0 0 1px rgba(6,182,212,0.4), 0 28px 50px rgba(0,0,0,0.7)" }
-          : { scale: 1, boxShadow: "0 10px 25px rgba(0,0,0,0.4)" }
+        isExpanded
+          ? { opacity: 0, scale: 0.97 }
+          : isDragging
+          ? { opacity: 1, scale: 1.06, boxShadow: "0 0 0 1px rgba(6,182,212,0.4), 0 28px 50px rgba(0,0,0,0.7)" }
+          : { opacity: 1, scale: 1, boxShadow: "0 10px 25px rgba(0,0,0,0.4)" }
       }
       whileHover={
-        !isDragging
+        !isDragging && !isExpanded
           ? { scale: 1.03, boxShadow: "0 0 0 1px rgba(6,182,212,0.25), 0 20px 40px rgba(0,0,0,0.6)" }
           : undefined
       }
@@ -305,21 +318,6 @@ export function TaskCard({
       <div className="flex items-center gap-2">
         <DateButton dueDate={task.dueDate} onSelect={(d) => onSetDueDate(task.id, d)} />
         <PriorityButton priority={task.priority} onSelect={(p) => onSetPriority(task.id, p)} />
-        <div className="flex-1" />
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => router.push(`/tasks/${task.id}`)}
-          className="text-slate-600 hover:text-slate-300 transition-colors"
-          aria-label="Open task"
-        >
-          <svg
-            width="14" height="14" viewBox="0 0 16 16"
-            fill="none" stroke="currentColor" strokeWidth="1.5"
-            strokeLinecap="round" strokeLinejoin="round"
-          >
-            <path d="M4 8h8M9 5l3 3-3 3" />
-          </svg>
-        </button>
       </div>
     </motion.div>
   );

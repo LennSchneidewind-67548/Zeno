@@ -16,14 +16,16 @@ export type CardMotionValues = { x: MotionValue<number>; y: MotionValue<number> 
 export type PositionUpdate = { id: string; x: number; y: number };
 
 export function useCanvasPhysics(
-  onSavePositions: (updates: PositionUpdate[]) => void
+  onSavePositions: (updates: PositionUpdate[]) => void,
+  onTap?: (id: string) => void
 ) {
-  const entries    = useRef<Map<string, CardMotionValues>>(new Map());
-  const heights    = useRef<Map<string, number>>(new Map());
-  const targets    = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const dragging   = useRef<{ id: string; grabX: number; grabY: number } | null>(null);
-  const displaced  = useRef<Set<string>>(new Set());
-  const lastPush   = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const entries      = useRef<Map<string, CardMotionValues>>(new Map());
+  const heights      = useRef<Map<string, number>>(new Map());
+  const targets      = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const dragging     = useRef<{ id: string; grabX: number; grabY: number } | null>(null);
+  const displaced    = useRef<Set<string>>(new Set());
+  const lastPush     = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const pointerStart = useRef({ x: 0, y: 0 });
 
   // Single useState — only for z-index re-render on drag start/end
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -62,6 +64,7 @@ export function useCanvasPhysics(
     const entry = entries.current.get(id);
     if (!entry) return;
 
+    pointerStart.current = { x: e.clientX, y: e.clientY };
     dragging.current = {
       id,
       grabX: e.clientX - entry.x.get(),
@@ -75,6 +78,8 @@ export function useCanvasPhysics(
   // Window-level move/up registered when drag starts, cleaned up on end
   const onSaveRef = useRef(onSavePositions);
   useEffect(() => { onSaveRef.current = onSavePositions; });
+  const onTapRef = useRef(onTap);
+  useEffect(() => { onTapRef.current = onTap; });
 
   useEffect(() => {
     function onPointerMove(e: PointerEvent) {
@@ -92,11 +97,20 @@ export function useCanvasPhysics(
       targets.current.set(id, { x: tx, y: ty });
     }
 
-    function onPointerUp() {
+    function onPointerUp(e: PointerEvent) {
       if (!dragging.current) return;
       const { id } = dragging.current;
       dragging.current = null;
       setDraggingId(null);
+
+      const dist = Math.hypot(
+        e.clientX - pointerStart.current.x,
+        e.clientY - pointerStart.current.y
+      );
+      if (dist < 8) {
+        onTapRef.current?.(id);
+        return; // tap — don't save position (card didn't move)
+      }
 
       const updates: PositionUpdate[] = [];
       const t = targets.current.get(id);

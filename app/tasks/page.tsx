@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence } from "framer-motion";
 import { getBrowserClient } from "@/lib/supabase-browser";
 import { useCanvasPhysics, type PositionUpdate } from "@/hooks/useCanvasPhysics";
 import { TaskCard } from "@/components/TaskCard";
+import { TaskExpandedView } from "@/components/TaskExpandedView";
 import type { Priority, ClientTask } from "@/lib/task-types";
 
 type Task = ClientTask;
@@ -34,6 +36,10 @@ export default function TasksPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const [expandedTask, setExpandedTask] = useState<{ id: string; rect: DOMRect } | null>(null);
+
+  // DOM element refs for each card — used to capture expansion origin rect
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // ── Position persistence ───────────────────────────────────────
 
@@ -48,6 +54,12 @@ export default function TasksPage() {
     }
   }, []);
 
+  const handleTap = useCallback((id: string) => {
+    const el = cardRefs.current.get(id);
+    if (!el) return;
+    setExpandedTask({ id, rect: el.getBoundingClientRect() });
+  }, []);
+
   const {
     initCard,
     pruneCards,
@@ -55,7 +67,7 @@ export default function TasksPage() {
     registerHeight,
     handlePointerDown,
     draggingId,
-  } = useCanvasPhysics(savePositions);
+  } = useCanvasPhysics(savePositions, handleTap);
 
   // ── Data loading ──────────────────────────────────────────────
 
@@ -86,7 +98,6 @@ export default function TasksPage() {
     if (!initialized) return;
     const activeIds = new Set(tasks.map((t) => t.id));
     pruneCards(activeIds);
-    // Init any newly added tasks
     tasks.forEach((task, index) => {
       const pos = resolvedPosition(task, index);
       initCard(task.id, pos.x, pos.y);
@@ -132,6 +143,10 @@ export default function TasksPage() {
     });
   }
 
+  const expandedTaskData = expandedTask
+    ? tasks.find((t) => t.id === expandedTask.id)
+    : null;
+
   // ── Render ────────────────────────────────────────────────────
 
   return (
@@ -156,8 +171,14 @@ export default function TasksPage() {
             x={mv.x}
             y={mv.y}
             isDragging={draggingId === task.id}
+            isExpanded={expandedTask?.id === task.id}
             onPointerDown={(e) => handlePointerDown(task.id, e)}
             registerHeight={registerHeight}
+            registerRef={(el) =>
+              el
+                ? cardRefs.current.set(task.id, el)
+                : cardRefs.current.delete(task.id)
+            }
             onSetDueDate={setDueDate}
             onSetPriority={setPriority}
           />
@@ -169,6 +190,18 @@ export default function TasksPage() {
           <p className="text-sm text-slate-700">Loading…</p>
         </div>
       )}
+
+      {/* Expanded task overlay */}
+      <AnimatePresence>
+        {expandedTask && expandedTaskData && (
+          <TaskExpandedView
+            key={expandedTask.id}
+            task={expandedTaskData}
+            originRect={expandedTask.rect}
+            onClose={() => setExpandedTask(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Floating input */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
