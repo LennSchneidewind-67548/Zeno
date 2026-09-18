@@ -9,9 +9,10 @@ export async function GET() {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Embed each task's subtasks so cards can show real breakdown progress.
   const { data, error } = await supabase
     .from("tasks")
-    .select("*")
+    .select("*, subtasks(done, parent_id)")
     .order("created_at", { ascending: true });
 
   if (error) {
