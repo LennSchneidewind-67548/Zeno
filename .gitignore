@@ -12,6 +12,9 @@
 # production
 /.vercel
 
+# next.js generated types (regenerated per build; churns between dev and prod)
+next-env.d.ts
+
 # coverage and cache
 /coverage/
 *.tsbuildinfo
