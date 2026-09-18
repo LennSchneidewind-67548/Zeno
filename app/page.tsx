@@ -616,7 +616,7 @@ export default function LandingPage() {
           <span className="dot" />
           <span>v0.1</span>
           <span style={{ color: 'var(--ink-3)' }}>·</span>
-          <span>work in progress</span>
+          <span>in progress</span>
         </div>
         <div className="l-nav-links">
           <a href="#how">How it works</a>
