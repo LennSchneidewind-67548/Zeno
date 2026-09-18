@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence } from "framer-motion";
 import { getBrowserClient } from "@/lib/supabase-browser";
-import { useCanvasPhysics, type PositionUpdate } from "@/hooks/useCanvasPhysics";
 import { TaskCard } from "@/components/TaskCard";
+import type { CardHandle } from "@/components/TaskCard";
 import { TaskExpandedView } from "@/components/TaskExpandedView";
-import type { Priority, ClientTask } from "@/lib/task-types";
+import type { ClientTask } from "@/lib/task-types";
 
 type Task = ClientTask;
 
@@ -20,95 +20,115 @@ function parseTask(raw: Task & { dueDate?: string | Date }): Task {
   };
 }
 
-function resolvedPosition(task: Task, index: number): { x: number; y: number } {
-  if (task.x !== null && task.y !== null) return { x: task.x, y: task.y };
-  const col = index % 4;
-  const row = Math.floor(index / 4);
-  return {
-    x: window.innerWidth / 2 - 112 + col * 240 - 360,
-    y: window.innerHeight / 2 - 80 + row * 180 - 180,
-  };
-}
-
 export default function TasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
-  const [initialized, setInitialized] = useState(false);
   const [expandedTask, setExpandedTask] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  // DOM element refs for each card — used to capture expansion origin rect
-  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Card handles give us setTarget (motion value) + getPosition (current spring pos)
+  const cardHandles = useRef<Map<string, CardHandle>>(new Map());
+  // Drag state lives in a ref — updated every frame without triggering re-renders
+  const draggingRef = useRef<{
+    id: string; dx: number; dy: number; startX: number; startY: number;
+  } | null>(null);
+  const positionsInitialized = useRef(false);
 
-  // ── Position persistence ───────────────────────────────────────
-
-  const savePositions = useCallback((updates: PositionUpdate[]) => {
-    for (const { id, x, y } of updates) {
-      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, x, y } : t)));
-      fetch(`/api/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x, y }),
-      });
+  // ── Load tasks ────────────────────────────────────────────────
+  // Never rejects — callers treat a failed refresh as "keep showing what we have".
+  const loadTasks = useCallback(async () => {
+    try {
+      const res = await fetch("/api/tasks");
+      if (res.status === 401) { router.replace("/"); return; }
+      if (!res.ok) return;
+      const data: Task[] = await res.json();
+      setTasks(data.map(parseTask));
+    } catch {
+      // Offline or the request was aborted — leave the current cards in place.
     }
-  }, []);
-
-  const handleTap = useCallback((id: string) => {
-    const el = cardRefs.current.get(id);
-    if (!el) return;
-    setExpandedTask({ id, rect: el.getBoundingClientRect() });
-  }, []);
-
-  const {
-    initCard,
-    pruneCards,
-    getMotionValues,
-    registerHeight,
-    handlePointerDown,
-    draggingId,
-  } = useCanvasPhysics(savePositions, handleTap);
-
-  // ── Data loading ──────────────────────────────────────────────
-
-  useEffect(() => {
-    fetch("/api/tasks")
-      .then((res) => {
-        if (res.status === 401) { router.replace("/"); return null; }
-        return res.json();
-      })
-      .then((data: Task[] | null) => {
-        if (data) setTasks(data.map(parseTask));
-      })
-      .finally(() => setLoading(false));
   }, [router]);
 
-  // Initialize motion values once tasks and DOM are ready
   useEffect(() => {
-    if (loading || initialized) return;
-    tasks.forEach((task, index) => {
-      const pos = resolvedPosition(task, index);
-      initCard(task.id, pos.x, pos.y);
-    });
-    setInitialized(true);
-  }, [loading, initialized, tasks, initCard]);
+    loadTasks().finally(() => setLoading(false));
+  }, [loadTasks]);
 
-  // Keep physics map in sync with tasks list
+  // ── Initialize positions from task data (once) ────────────────
   useEffect(() => {
-    if (!initialized) return;
-    const activeIds = new Set(tasks.map((t) => t.id));
-    pruneCards(activeIds);
-    tasks.forEach((task, index) => {
-      const pos = resolvedPosition(task, index);
-      initCard(task.id, pos.x, pos.y);
+    if (loading || positionsInitialized.current || tasks.length === 0) return;
+    positionsInitialized.current = true;
+    const pos: Record<string, { x: number; y: number }> = {};
+    tasks.forEach((task, i) => {
+      pos[task.id] = {
+        x: task.x ?? (80 + (i % 4) * 230),
+        y: task.y ?? (100 + Math.floor(i / 4) * 170),
+      };
     });
-  }, [tasks, initialized, initCard, pruneCards]);
+    setPositions(pos);
+  }, [tasks, loading]);
+
+  // ── Drag — runs once, reads from refs so no stale closures ────
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = draggingRef.current;
+      if (!d) return;
+      const x = Math.max(0, e.clientX - d.dx);
+      const y = Math.max(64, e.clientY - d.dy);
+      // Update motion value directly — no React state, no re-render
+      cardHandles.current.get(d.id)?.setTarget(x, y);
+    };
+
+    const onUp = (e: MouseEvent) => {
+      const d = draggingRef.current;
+      if (!d) return;
+      const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
+      draggingRef.current = null;
+      setDraggingId(null);
+
+      if (dist < 5) {
+        const handle = cardHandles.current.get(d.id);
+        if (handle?.el) setExpandedTask({ id: d.id, rect: handle.el.getBoundingClientRect() });
+      } else {
+        const x = Math.max(0, e.clientX - d.dx);
+        const y = Math.max(64, e.clientY - d.dy);
+        setPositions((prev) => ({ ...prev, [d.id]: { x, y } }));
+        fetch(`/api/tasks/${d.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x, y }),
+        });
+      }
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []); // empty deps — all state accessed via refs
+
+  // Stable mousedown handler — reads current spring position from card handle
+  const onCardMouseDown = useCallback((id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    const handle = cardHandles.current.get(id);
+    const pos = handle?.getPosition() ?? positions[id];
+    if (!pos) return;
+    draggingRef.current = {
+      id,
+      dx: e.clientX - pos.x,
+      dy: e.clientY - pos.y,
+      startX: e.clientX,
+      startY: e.clientY,
+    };
+    setDraggingId(id);
+  }, [positions]);
 
   // ── Task operations ──────────────────────────────────────────
-
   async function signOut() {
-    const supabase = getBrowserClient();
-    await supabase.auth.signOut();
+    await getBrowserClient().auth.signOut();
     router.push("/");
   }
 
@@ -121,102 +141,243 @@ export default function TasksPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: trimmed }),
     });
-    const newTask = await res.json();
-    setTasks((prev) => [...prev, parseTask(newTask)]);
+    const newTask = parseTask(await res.json());
+    setTasks((prev) => [...prev, newTask]);
+    // Use the position the server assigned, so the card sits where it will
+    // reappear on reload instead of jumping to a different spot.
+    setPositions((prev) => ({
+      ...prev,
+      [newTask.id]: { x: newTask.x ?? 600, y: newTask.y ?? 300 },
+    }));
   }
 
-  function setDueDate(id: string, date: Date) {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, dueDate: date } : t)));
+  function toggleDone(id: string) {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const done = !task.done;
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done } : t)));
     fetch(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dueDate: date.toISOString() }),
+      body: JSON.stringify({ done }),
     });
   }
 
-  function setPriority(id: string, priority: Priority) {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, priority } : t)));
-    fetch(`/api/tasks/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ priority }),
-    });
+  function deleteTask(id: string) {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setPositions((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setExpandedTask(null);
+    fetch(`/api/tasks/${id}`, { method: "DELETE" });
   }
 
-  const expandedTaskData = expandedTask
-    ? tasks.find((t) => t.id === expandedTask.id)
-    : null;
+  const expandedTaskData = expandedTask ? tasks.find((t) => t.id === expandedTask.id) : null;
+
+  // Closing the overlay is the moment breakdown progress may have changed —
+  // refetch so the canvas cards and header count stay truthful.
+  function closeExpanded() {
+    setExpandedTask(null);
+    loadTasks();
+  }
+
+  const summary = tasks.reduce(
+    (acc, t) => t.progress
+      ? { done: acc.done + t.progress.done, total: acc.total + t.progress.total }
+      : acc,
+    { done: 0, total: 0 }
+  );
 
   // ── Render ────────────────────────────────────────────────────
-
   return (
-    <div className="fixed inset-0 bg-slate-950 overflow-hidden">
+    <div
+      className="fixed inset-0 overflow-hidden"
+      style={{
+        background: `
+          radial-gradient(800px circle at 15% 5%, oklch(0.88 0.12 85 / 0.25), transparent 60%),
+          radial-gradient(900px circle at 95% 30%, oklch(0.78 0.14 300 / 0.18), transparent 55%),
+          radial-gradient(700px circle at 50% 100%, oklch(0.82 0.13 155 / 0.18), transparent 60%),
+          oklch(0.97 0.018 92)
+        `,
+        color: "oklch(0.20 0.025 285)",
+        fontFamily: "var(--font-geist-sans), ui-sans-serif, sans-serif",
+      }}
+    >
+      {/* Dot grid */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: "radial-gradient(circle at center, oklch(0.20 0.025 285 / 0.07) 1px, transparent 1.2px)",
+          backgroundSize: "28px 28px",
+        }}
+      />
 
-      {/* Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4">
-        <span className="text-slate-500 text-sm font-medium tracking-widest uppercase">Zeno</span>
-        <button onClick={signOut} className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
+      {/* Floating header pill */}
+      <div
+        className="fixed top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3"
+        style={{
+          padding: "10px 10px 10px 18px",
+          background: "oklch(0.99 0 0 / 0.8)",
+          backdropFilter: "blur(20px) saturate(1.4)",
+          border: "1px solid oklch(0.20 0.025 285 / 0.1)",
+          borderRadius: 999,
+          boxShadow: "0 10px 30px -10px oklch(0.20 0.025 285 / 0.15)",
+          maxWidth: "calc(100vw - 32px)",
+        }}
+      >
+        {/* Logo */}
+        <div
+          className="flex items-center gap-2"
+          style={{ fontFamily: "var(--font-fraunces), serif", fontSize: 20, fontWeight: 500, letterSpacing: "-0.02em" }}
+        >
+          <div style={{
+            width: 26, height: 26, borderRadius: 9, flexShrink: 0,
+            background: "linear-gradient(135deg, oklch(0.85 0.16 85), oklch(0.72 0.18 72))",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: "oklch(0.20 0.025 285)", fontWeight: 700, fontSize: 13,
+            fontFamily: "var(--font-geist-sans), sans-serif",
+          }}>Z</div>
+          Zeno
+        </div>
+
+        {/* Live count of completed subtasks across every broken-down task */}
+        {summary.total > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 7,
+            padding: "5px 13px", borderRadius: 999,
+            background: "oklch(0.95 0.08 85)",
+            fontFamily: "var(--font-geist-mono), monospace",
+            fontSize: 11, color: "oklch(0.35 0.12 72)",
+            fontWeight: 500, letterSpacing: "0.04em", whiteSpace: "nowrap",
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "oklch(0.72 0.18 72)", display: "inline-block" }} />
+            {summary.done}/{summary.total} steps done
+          </div>
+        )}
+
+        {/* Sign out */}
+        <button
+          onClick={signOut}
+          style={{
+            padding: "8px 14px", borderRadius: 999, border: "none",
+            background: "transparent", cursor: "pointer",
+            fontSize: 13, color: "oklch(0.42 0.02 285)", whiteSpace: "nowrap",
+          }}
+        >
           Sign out
         </button>
       </div>
 
-      {/* Cards */}
-      {initialized && tasks.map((task) => {
-        const mv = getMotionValues(task.id);
-        if (!mv) return null;
+      {/* Task cards */}
+      {!loading && tasks.map((task) => {
+        const pos = positions[task.id];
+        if (!pos) return null;
         return (
           <TaskCard
             key={task.id}
             task={task}
-            x={mv.x}
-            y={mv.y}
+            initialX={pos.x}
+            initialY={pos.y}
             isDragging={draggingId === task.id}
             isExpanded={expandedTask?.id === task.id}
-            onPointerDown={(e) => handlePointerDown(task.id, e)}
-            registerHeight={registerHeight}
-            registerRef={(el) =>
-              el
-                ? cardRefs.current.set(task.id, el)
-                : cardRefs.current.delete(task.id)
+            onMouseDown={(e) => onCardMouseDown(task.id, e)}
+            registerCard={(handle) =>
+              handle
+                ? cardHandles.current.set(task.id, handle)
+                : cardHandles.current.delete(task.id)
             }
-            onSetDueDate={setDueDate}
-            onSetPriority={setPriority}
           />
         );
       })}
 
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <p className="text-sm text-slate-700">Loading…</p>
+          <p style={{ fontSize: 13, color: "oklch(0.42 0.02 285)" }}>Loading…</p>
         </div>
       )}
 
-      {/* Expanded task overlay */}
+      {/* Empty desktop — point at the one thing there is to do */}
+      {!loading && tasks.length === 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6 text-center">
+          <div style={{
+            width: 52, height: 52, borderRadius: 16, marginBottom: 18,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, color: "oklch(0.30 0.14 72)",
+            background: "linear-gradient(135deg, oklch(0.90 0.14 85), oklch(0.72 0.18 72))",
+            boxShadow: "0 10px 30px -10px oklch(0.72 0.18 72 / 0.5)",
+          }}>●</div>
+          <h2 style={{
+            fontFamily: "var(--font-fraunces), serif",
+            fontVariationSettings: '"SOFT" 60, "opsz" 48',
+            fontSize: 26, fontWeight: 450, letterSpacing: "-0.02em",
+            marginBottom: 8, color: "oklch(0.20 0.025 285)",
+          }}>
+            Your desktop is empty.
+          </h2>
+          <p style={{ fontSize: 14, maxWidth: 340, lineHeight: 1.5, color: "oklch(0.48 0.02 285)" }}>
+            Drop a task below — even a vague one. Zeno will break it into a shape
+            you can start from.
+          </p>
+        </div>
+      )}
+
+      {/* Task expanded overlay */}
       <AnimatePresence>
         {expandedTask && expandedTaskData && (
           <TaskExpandedView
             key={expandedTask.id}
             task={expandedTaskData}
             originRect={expandedTask.rect}
-            onClose={() => setExpandedTask(null)}
+            onClose={closeExpanded}
+            onToggleDone={() => toggleDone(expandedTask.id)}
+            onDelete={() => deleteTask(expandedTask.id)}
           />
         )}
       </AnimatePresence>
 
-      {/* Floating input */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
-        <div className="flex items-center gap-3 bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 rounded-2xl px-5 py-3 shadow-2xl shadow-black/60 w-80">
+      {/* Floating input bar */}
+      <div
+        className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-200 ${
+          expandedTask ? "opacity-0 pointer-events-none translate-y-2" : "opacity-100"
+        }`}
+      >
+        <div
+          className="flex items-center gap-3"
+          style={{
+            background: "oklch(0.99 0 0 / 0.85)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid oklch(0.20 0.025 285 / 0.12)",
+            borderRadius: 999,
+            padding: "10px 10px 10px 20px",
+            boxShadow: "0 20px 40px -10px oklch(0.20 0.025 285 / 0.2)",
+            width: 360,
+          }}
+        >
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") addTask(); }}
-            placeholder="Add a task…"
-            className="w-full bg-transparent text-white placeholder:text-slate-600 text-sm outline-none caret-cyan-400"
+            placeholder="Drop a task on your desktop…"
+            style={{
+              flex: 1, background: "transparent", border: "none", outline: "none",
+              fontSize: 14, color: "oklch(0.20 0.025 285)",
+              fontFamily: "var(--font-geist-sans), sans-serif",
+            }}
           />
+          <button
+            onClick={addTask}
+            style={{
+              padding: "9px 18px", borderRadius: 999, border: "none",
+              background: "oklch(0.20 0.025 285)", color: "oklch(0.97 0.018 92)",
+              fontSize: 13, fontWeight: 500, cursor: "pointer",
+              fontFamily: "var(--font-geist-sans), sans-serif",
+              whiteSpace: "nowrap",
+              boxShadow: "0 6px 16px -4px oklch(0.20 0.025 285 / 0.4)",
+            }}
+          >
+            + Drop it
+          </button>
         </div>
       </div>
-
     </div>
   );
 }
