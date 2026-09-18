@@ -35,7 +35,6 @@ export default function TasksPage() {
   const draggingRef = useRef<{
     id: string; dx: number; dy: number; startX: number; startY: number;
   } | null>(null);
-  const positionsInitialized = useRef(false);
 
   // ── Load tasks ────────────────────────────────────────────────
   // Never rejects — callers treat a failed refresh as "keep showing what we have".
@@ -44,30 +43,31 @@ export default function TasksPage() {
       const res = await fetch("/api/tasks");
       if (res.status === 401) { router.replace("/"); return; }
       if (!res.ok) return;
-      const data: Task[] = await res.json();
-      setTasks(data.map(parseTask));
+      const parsed: Task[] = (await res.json() as Task[]).map(parseTask);
+      setTasks(parsed);
+      // Seed a position for any card that doesn't have one yet. Cards already
+      // on screen keep theirs, so a refetch never yanks them out from under a drag.
+      setPositions((prev) => {
+        const next = { ...prev };
+        parsed.forEach((task, i) => {
+          if (next[task.id]) return;
+          next[task.id] = {
+            x: task.x ?? (80 + (i % 4) * 230),
+            y: task.y ?? (100 + Math.floor(i / 4) * 170),
+          };
+        });
+        return next;
+      });
     } catch {
       // Offline or the request was aborted — leave the current cards in place.
+    } finally {
+      setLoading(false);
     }
   }, [router]);
 
   useEffect(() => {
-    loadTasks().finally(() => setLoading(false));
+    void loadTasks();
   }, [loadTasks]);
-
-  // ── Initialize positions from task data (once) ────────────────
-  useEffect(() => {
-    if (loading || positionsInitialized.current || tasks.length === 0) return;
-    positionsInitialized.current = true;
-    const pos: Record<string, { x: number; y: number }> = {};
-    tasks.forEach((task, i) => {
-      pos[task.id] = {
-        x: task.x ?? (80 + (i % 4) * 230),
-        y: task.y ?? (100 + Math.floor(i / 4) * 170),
-      };
-    });
-    setPositions(pos);
-  }, [tasks, loading]);
 
   // ── Drag — runs once, reads from refs so no stale closures ────
   useEffect(() => {

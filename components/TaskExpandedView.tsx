@@ -28,10 +28,9 @@ export function TaskExpandedView({ task, originRect, onClose, onToggleDone, onDe
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  useEffect(() => { setConfirmDelete(false); }, [task.id]);
-
+  // No reset effects for task.id: the page renders this with key={task.id}, so a
+  // different task remounts the component and every useState initialiser reruns.
   useEffect(() => {
-    setLoadingSubtasks(true);
     fetch(`/api/tasks/${task.id}/subtasks`)
       .then((r) => r.json())
       .then((data: { structure: Structure; subtasks: ClientSubtask[] } | null) => {

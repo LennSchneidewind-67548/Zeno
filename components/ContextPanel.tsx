@@ -38,7 +38,8 @@ export function ContextPanel({ taskId, onComplete }: Props) {
   function toggleChip(chip: string) {
     setSelectedChips((prev) => {
       const next = new Set(prev);
-      next.has(chip) ? next.delete(chip) : next.add(chip);
+      if (next.has(chip)) next.delete(chip);
+      else next.add(chip);
       return next;
     });
   }
