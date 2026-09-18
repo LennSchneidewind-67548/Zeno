@@ -6,27 +6,29 @@
 - Keep components small and single-purpose
 
 ## File Naming
-- React components: PascalCase (`TaskItem.tsx`)
-- Utilities/lib: camelCase (`xp.ts`, `claude.ts`)
+- React components: PascalCase (`TaskCard.tsx`)
+- Utilities/lib: camelCase (`gemini.ts`, `task-types.ts`)
 - Route handlers: `app/api/.../route.ts` (Next.js convention)
 
-## Tailwind v4
-- No `tailwind.config.js` — configuration lives in CSS via `@theme` blocks in `globals.css`
-- Use utility classes directly; avoid arbitrary values unless necessary
+## Styling
+- No `tailwind.config.js` — Tailwind v4 configuration lives in CSS via `@theme` blocks in `globals.css`
+- The app UI is styled with inline `style` objects using `oklch()` colours; Tailwind utilities are used for layout primitives. Match the surrounding file rather than mixing both in one component
+- The landing page keeps its own scoped CSS in the `STYLES` constant in `app/page.tsx`
 
 ## API Routes
-- All Claude API calls must go through server-side Route Handlers
-- Never import `lib/claude.ts` from client components — mark it `'server only'` if needed
+- All model calls must go through server-side Route Handlers — the Google AI key never reaches the browser
+- Never import `lib/gemini.ts` or `lib/supabase-server.ts` from a `"use client"` component
+- Every handler checks `auth.getUser()` first and returns 401 when there is no session
 - Route handlers return JSON; use standard HTTP status codes
 
 ## State Management
 - Start with React `useState`/`useReducer` — do not reach for external state libraries unless clearly needed
-- Persist to `localStorage` for MVP; migrate to a real DB when persistence requirements are clearer
+- Persistence goes to Supabase. Write optimistically for instant feedback, and roll back on failure so the UI never claims something was saved when it was not
+- Anything updated on every frame (drag position) belongs in a ref or a motion value, not React state
 
-## XP System
-- XP values live in `lib/xp.ts` as named constants — don't scatter magic numbers across components
-- Completing a subtask: base XP award
-- Completing all subtasks of a parent task: bonus multiplier applied to parent task's total
+## XP System (not yet built)
+- When built, XP values live in `lib/xp.ts` as named constants — don't scatter magic numbers across components
+- Until then, do not show XP, levels, or streaks anywhere in the app UI. Placeholder numbers that never change read as broken; show real counts or nothing
 
 ## Git
 - Commit messages: imperative mood, present tense ("Add task splitting endpoint")

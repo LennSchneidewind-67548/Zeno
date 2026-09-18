@@ -2,140 +2,212 @@
 
 ## What is this?
 
-Zeno is an ADHD-friendly productivity app. The core problem it solves: people with ADHD struggle to start large tasks because they feel overwhelming. Zeno lets users capture tasks and projects on a spatial desktop, then break them down automatically using AI into a visual structure — tree, star, or linear — that makes it obvious where to start.
+Zeno is an ADHD-friendly productivity app. The core problem it solves: people with ADHD struggle to start large tasks because they feel overwhelming. Zeno lets users capture tasks on a spatial desktop, then break them down automatically using AI into a visual structure — linear, tree, star, or pipeline — that makes it obvious where to start. Completing subtasks earns XP, building a satisfying reward loop.
 
 ---
 
 ## The Three Layers
 
-### Layer 1 — Landing Page (done)
-Dark atmospheric page with the Zeno lamp animation. Login / sign-up form is embedded. On success the user lands on the Desktop.
+### Layer 1 — Landing Page ✅ Done
+
+Bright, gamified marketing page (`app/page.tsx`). Features:
+- Hero with floating level-up cards, XP bar, and streak chips
+- Animated SVG previews of all 4 structure types (Linear, Tree, Star, Pipeline)
+- Scrolling marquee, "How it works" steps, draggable desktop demo
+- Email + password sign-in / sign-up form wired to Supabase Auth
+- On successful auth, redirects to `/tasks`
+- Fonts: Fraunces (display) + Geist Sans + Geist Mono
 
 ---
 
-### Layer 2 — The Desktop
+### Layer 2 — The Desktop ✅ Done
 
-After logging in the user sees a **spatial canvas** — think a personal desktop. It is mostly empty space where items live as draggable cards.
+`app/tasks/page.tsx` — spatial canvas where tasks live as draggable cards.
 
-**Items**
-- Each item is a small box with an icon and a title
-- Two types: **Task** (single thing to get done) and **Project** (a larger goal containing multiple tasks)
-- Items can be freely dragged around the canvas and repositioned
-- Clicking "+ New" (or equivalent) creates a new item and drops it onto the canvas
-- Items persist their position in the database so the layout is restored on next visit
+**What's built**
+- Infinite canvas with dot-grid background
+- Task cards are freely draggable; positions saved to Supabase (`canvas_x`, `canvas_y`)
+- "New task" button creates a card and drops it at a random position
+- Cards show task title, icon (emoji), done state, and task type badge
+- Cards show a progress bar (done/total subtasks) once a breakdown exists, with a golden glow at 100%
+- Header shows a live count of completed steps across all broken-down tasks
+- Empty-state prompt when the desktop has no cards yet
+- Clicking a card opens Layer 3 (fullscreen overlay)
+- Sign-out button in header
 
-**Interactions**
-- Drag to reposition
-- Click to open (enters Layer 3 — the Item View)
-- Fun physics / snap behaviour to be designed later
-- Animations and ambient effects to be layered on later
-
-**What is NOT here**
+**What's NOT here**
 - No traditional list view
-- No sidebar, no folders, no hierarchy at this layer — the canvas is flat
+- No sidebar, folders, or hierarchy at this layer — the canvas is flat
+- No snap-to-grid or collision behaviour (cards use spring physics while dragging, but float freely)
+- No XP, levels, or streaks — see Gamification below
 
 ---
 
-### Layer 3 — The Item View (fullscreen)
+### Layer 3 — The Task View ✅ Done
 
-Clicking any item on the desktop opens it fullscreen. This is where all the depth lives.
+Clicking a card opens a fullscreen overlay. Two states:
 
-#### 3a — Before breakdown: the Context Panel
+#### 3a — Before breakdown: the Context Panel (`components/ContextPanel.tsx`) ✅
 
-The item opens showing its title and a prompt to generate a breakdown. The user has two ways to provide context:
+Two input modes:
 
 **Option A — Guided input**
-A panel with three components:
-1. **Workflow description** — free-text field: "How do you usually approach this kind of thing? Any tools, constraints, or habits?"
-2. **Clarifying question chips** — as soon as the panel opens a background call fires to the AI using just the item title. It returns ~5 short questions (e.g. "Is there a deadline?", "Do you need to do research first?"). Each appears as a clickable chip; tapping one appends it as context without the user having to type.
-3. **Detail level slider** — controls how granular the breakdown should be (roughly maps to target number of subtasks, e.g. 3–15).
+1. Workflow description free-text field
+2. A fixed set of 5 clarifying question chips (static list in `ContextPanel.tsx` — AI-generated chips were considered and dropped)
+3. Detail level slider (maps to target subtask count, 3–15)
 
-**Option B — Document / conversation dump**
-A large text area where the user can paste any existing content: a full LLM conversation, a brainstorm doc, meeting notes, a voice transcript. The AI uses this as the primary context instead of the guided fields. Both options can be combined.
+**Option B — Document dump**
+Large text area for pasting existing content (notes, conversation transcripts, brainstorm docs). Both modes can be combined.
 
-#### 3b — After breakdown: the Structure View
+Submit button calls `POST /api/tasks/[id]/split`. Shows spinner while AI runs.
 
-Once the user submits, the input is assembled into a prompt. The AI does two things in one call:
-1. **Picks a structure** based on the task's nature:
-   - **Linear** — steps that must happen in sequence
-   - **Tree** — hierarchical, some subtasks depend on others
-   - **Star** — one central goal, independent subtasks that can be done in any order
-2. **Generates the subtasks** using the chosen structure and all provided context
+#### 3b — After breakdown: the Structure View (`components/StructureView.tsx`) ✅
 
-The response (structured JSON) is saved to the database. The panel closes and the **entire screen** becomes the structure visualisation:
-- **Linear**: a clean vertical sequence, numbered
-- **Tree**: a node graph with dependency arrows
-- **Star**: the parent node in the centre, subtasks radiating outward
+The AI picks one of four structures and generates subtasks. The entire screen becomes the visual breakdown:
 
-Each node in the visualisation is a checkbox. Checking one marks it done, awards XP (gamification, planned), and dims the node.
+| Structure | Visual | Unlock logic |
+|---|---|---|
+| **Linear** | Horizontal strip of cards with → arrows | Sequential: first non-done = active, rest locked |
+| **Tree** | Root → branch row → child columns, SVG connector lines | Sequential branches; within active branch, sequential children |
+| **Star** | Center circle (task title) + surrounding cards | Parallel: all cards active simultaneously |
+| **Pipeline** | Phase header row with → arrows + task columns below each phase | Sequential phases; within active phase, sequential tasks |
+
+Node states: `done` (teal), `active` (purple + ring), `locked` (gray), `todo` (slate).
+
+Clicking a node toggles its done state. "Start over" deletes the breakdown and returns to the Context Panel.
+
+Toggling a node updates local state optimistically and persists via `PATCH /api/subtasks/[id]`; a failed write rolls the node back. Closing the overlay refetches tasks so canvas cards show current progress.
 
 ---
 
-## Gamification (planned)
-- Completing a subtask awards XP
-- Completing all subtasks of an item awards a bonus multiplier
-- XP accumulates toward levels / milestones
-- Satisfying completion animations and sounds — important for dopamine feedback
+## Gamification — Planned Next
+
+Detailed plan in `/Users/lennschneidewind/.claude/plans/okay-i-want-you-cosmic-harp.md`.
+
+### XP Economy
+| Event | XP |
+|---|---|
+| Complete a subtask | +15 |
+| First subtask of a task ("activation bonus") | +5 extra |
+| All subtasks done (task complete) | +50 bonus |
+| AI breakdown triggered (once per task) | +10 |
+| Pipeline phase complete | +10 |
+| Tree branch complete | +10 |
+
+Levels: 10 thresholds from 0 → 13,000 XP. Level displayed in desktop header.
+
+### What needs to be built
+1. ~~`PATCH /api/subtasks/[id]` — persist done toggle~~ ✅ done (XP not yet awarded)
+2. `user_stats` Supabase table — xp, level, streak_days, last_active_date
+3. `lib/xp.ts` — XP constants + level calculation
+4. `components/XPToast.tsx` — floating "+15 XP" animation on completion
+5. `components/XPBar.tsx` — level + XP progress bar in desktop header
+6. ~~Task card progress bar on canvas (done/total subtasks)~~ ✅ done
+7. Streak tracking (daily active days)
+
+### Zeno-specific mechanics
+- **Activation bonus**: reward starting specifically, not just finishing — ADHD brains struggle most with initiation
+- **Breakdown bonus**: incentivises the healthy habit of splitting before starting
+- **Structure-aware bonuses**: Pipeline phases and Tree branches each fire a mini-bonus, reinforcing the structural mechanic
+- **Canvas card glow**: cards on the desktop show a mini progress bar; golden glow at 100% done
 
 ---
 
 ## Design Philosophy
-- The desktop should feel like a calm, personal space — not a productivity dashboard
-- Cognitive load stays low: the canvas shows just titles and icons, depth lives inside each item
-- Reward small wins — every node completion should feel good
-- Mobile-aware but desktop-first for the canvas (drag interactions)
+- The desktop feels like a calm personal space — not a productivity dashboard
+- Cognitive load stays low: canvas shows just titles and icons; depth lives inside each item
+- Reward small wins — every node completion should feel satisfying
+- Bright, gamified aesthetic (cream background, yellow/purple/green/pink palette, Fraunces serif)
+- Desktop-first for drag interactions; mobile-aware
 
 ---
 
-## Data Model
+## Data Model (actual, as of now)
 
-### `items` table (replaces `tasks`)
+### `tasks` table
 ```
-id           uuid pk
-user_id      uuid → auth.users
-type         text  ('task' | 'project')
-title        text
-icon         text  (emoji or icon key)
-canvas_x     float  (desktop position)
-canvas_y     float
-created_at   timestamptz
+id                    uuid pk, default gen_random_uuid()
+user_id               uuid → auth.users (cascade delete)
+text                  text
+done                  boolean, default false
+canvas_x              float (desktop position)
+canvas_y              float
+breakdown_structure   text ('linear' | 'tree' | 'star' | 'pipeline'), nullable
+breakdown_xp_awarded  boolean, default false  ← to add in gamification phase
+created_at            timestamptz
 ```
 
 ### `subtasks` table
 ```
-id           uuid pk
-item_id      uuid → items.id (cascade delete)
-user_id      uuid → auth.users (for RLS)
-text         text
-done         boolean
-position     integer
-parent_id    uuid?   (null = root; set = child node in a tree)
-structure    text    ('linear' | 'tree' | 'star')
-created_at   timestamptz
+id         uuid pk
+task_id    uuid → tasks.id (cascade delete)
+user_id    uuid → auth.users (for RLS)
+text       text
+done       boolean, default false
+position   integer (ordering within structure)
+parent_id  uuid? (null = root/phase; set = child in tree/pipeline)
+created_at timestamptz
+```
+
+### `user_stats` table (to add in gamification phase)
+```
+user_id              uuid pk → auth.users
+xp                   integer, default 0
+level                integer, default 1
+streak_days          integer, default 0
+last_active_date     date
+total_subtasks_done  integer, default 0
+total_tasks_complete integer, default 0
+updated_at           timestamptz
 ```
 
 ---
 
-## API Routes
+## API Routes (actual)
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/items` | `GET` | Fetch all items for the user (desktop load) |
-| `/api/items` | `POST` | Create a new item |
-| `/api/items/[id]` | `PATCH` | Update title, icon, canvas position |
-| `/api/items/[id]` | `DELETE` | Delete item and its subtasks |
-| `/api/items/[id]/questions` | `POST` | Given the item title, return ~5 clarifying questions |
-| `/api/items/[id]/split` | `POST` | Full breakdown: context + detail level → structure + subtasks |
-| `/api/subtasks/[id]` | `PATCH` | Toggle done, update text |
-| `/api/subtasks/[id]` | `DELETE` | Remove a subtask node |
+| `/api/tasks` | `GET` | Fetch all tasks for the user |
+| `/api/tasks` | `POST` | Create a new task |
+| `/api/tasks/[id]` | `PATCH` | Update title, done, canvas position |
+| `/api/tasks/[id]` | `DELETE` | Delete task + subtasks |
+| `/api/tasks/[id]/split` | `POST` | AI breakdown: context → structure + subtasks (Gemini 2.5 Flash Lite) |
+| `/api/tasks/[id]/subtasks` | `GET` | Fetch subtasks + structure for a task |
+| `/api/tasks/[id]/subtasks` | `DELETE` | Clear all subtasks (reset to Context Panel) |
+| `/api/subtasks/[id]` | `PATCH` | Toggle a subtask's done state |
+| `/api/user-stats` | `GET` | Fetch user XP/level/streak ← **to build** |
+
+---
+
+## Key Files
+
+| File | Purpose |
+|---|---|
+| `app/page.tsx` | Landing page (gamified marketing + auth form) |
+| `app/layout.tsx` | Root layout; loads Fraunces, Geist, Geist Mono fonts |
+| `app/tasks/page.tsx` | Desktop canvas (main app) |
+| `app/api/tasks/route.ts` | GET + POST tasks |
+| `app/api/tasks/[id]/route.ts` | PATCH + DELETE task |
+| `app/api/tasks/[id]/split/route.ts` | AI breakdown endpoint |
+| `app/api/tasks/[id]/subtasks/route.ts` | GET + DELETE subtasks |
+| `components/TaskCard.tsx` | Draggable card on canvas |
+| `components/TaskExpandedView.tsx` | Fullscreen task overlay |
+| `components/ContextPanel.tsx` | Pre-breakdown input form |
+| `components/StructureView.tsx` | 4 visual structure renderers |
+| `lib/gemini.ts` | Gemini API wrapper (structured JSON output) |
+| `lib/task-types.ts` | TypeScript types: Task, Subtask, Structure, UserStats |
+| `lib/supabase-browser.ts` | Browser Supabase client |
+| `lib/supabase-server.ts` | Server-side Supabase client (for API routes) |
+| `supabase/schema.sql` | Tables + row level security policies (run once on a fresh project) |
 
 ---
 
 ## Build Order
 
-1. **Desktop canvas** — drag-and-drop item cards, create/delete, position persistence
-2. **Item view shell** — fullscreen overlay, title, back button
-3. **Context panel** — guided input (description + questions + slider) and document dump
-4. **AI split endpoint** — structure selection + subtask generation
-5. **Structure visualisation** — linear, tree, and star renderers
-6. **Gamification** — XP, completion animations
+1. ✅ Desktop canvas — drag-and-drop cards, create/delete, position persistence
+2. ✅ Task view shell — fullscreen overlay, title, back button
+3. ✅ Context panel — guided input (description + question chips + slider) + document dump
+4. ✅ AI split endpoint — Gemini picks structure + generates subtasks, saved to Supabase
+5. ✅ Structure visualisation — Linear, Tree, Star, Pipeline renderers with state-colour logic
+6. ✅ Landing page — bright gamified design, Supabase auth, 4 animated structure previews
+7. 🔜 **Gamification** — subtask persistence, XP system, level/streak tracking, completion animations

@@ -7,7 +7,6 @@ Entry point for Claude Code guidance in this repository.
 @docs/STACK.md
 @docs/ARCHITECTURE.md
 @docs/CONVENTIONS.md
-@docs/PERSISTENCE_PLAN.md
 
 ## Commands
 

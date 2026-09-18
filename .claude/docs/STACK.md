@@ -13,7 +13,8 @@
 ## Persistence
 - **Supabase** — PostgreSQL database + authentication
 - SDK installed: `@supabase/supabase-js` + `@supabase/ssr`
-- Client helper: `lib/supabase.ts`
+- Client helpers: `lib/supabase-browser.ts` (client components) and `lib/supabase-server.ts` (route handlers)
+- Schema and row level security policies: `supabase/schema.sql`
 
 ## Deployment (TBD)
 - Target: Vercel (natural fit for Next.js)
